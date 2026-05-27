@@ -91,14 +91,19 @@ Remove the install directory (substitute your `WTF_INSTALL_DIR` if customized):
 rm -rf ~/.wtf
 ```
 
-Remove the marker block from your shell rc file:
+Remove the marker block from whichever rc file the installer modified. The
+installer prints the exact path at the end of its run — use that one:
 
 ```bash
+RC=~/.zshrc            # zsh (macOS + Linux)
+# RC=~/.bash_profile   # bash on macOS
+# RC=~/.bashrc         # bash on Linux
+
 # macOS / BSD sed:
-sed -i '' '/# >>> wtf install/,/# <<< wtf install/d' ~/.zshrc
+sed -i '' '/# >>> wtf install/,/# <<< wtf install/d' "$RC"
 
 # GNU sed (Linux):
-sed -i '/# >>> wtf install/,/# <<< wtf install/d' ~/.zshrc
+sed -i '/# >>> wtf install/,/# <<< wtf install/d' "$RC"
 ```
 
 Or open the rc file and delete everything between

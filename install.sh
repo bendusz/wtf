@@ -129,15 +129,40 @@ MARKER_BEGIN="# >>> wtf install (https://github.com/${REPO}) >>>"
 MARKER_END="# <<< wtf install <<<"
 
 if grep -Fxq "$MARKER_BEGIN" "$RC_FILE" 2>/dev/null; then
-    # Strip the old block so we can rewrite it. Without this, a reinstall
-    # with a changed WTF_INSTALL_DIR would leave the rc still pointing at the
-    # previous path.
+    # Require BOTH markers in correct order. If the end marker is missing,
+    # the awk filter below would strip from the begin marker to EOF and could
+    # delete unrelated rc content. Refuse instead.
+    if ! grep -Fxq "$MARKER_END" "$RC_FILE" 2>/dev/null; then
+        err "Found wtf begin marker in $RC_FILE but no matching end marker."
+        err "Refusing to modify the file. Remove the orphan wtf line(s) by"
+        err "hand and re-run the installer."
+        exit 1
+    fi
+    begin_line=$(grep -nFx "$MARKER_BEGIN" "$RC_FILE" | head -n1 | cut -d: -f1)
+    end_line=$(grep -nFx "$MARKER_END" "$RC_FILE" | tail -n1 | cut -d: -f1)
+    if [[ -z "$begin_line" || -z "$end_line" ]] || (( begin_line >= end_line )); then
+        err "wtf markers in $RC_FILE are out of order — please fix manually."
+        exit 1
+    fi
+
+    RC_TMP=$(mktemp "${RC_FILE}.wtf-install.XXXXXX")
+    trap 'rm -f "$RC_TMP"' EXIT
     awk -v begin="$MARKER_BEGIN" -v end="$MARKER_END" '
         $0 == begin { in_block=1; next }
         in_block && $0 == end { in_block=0; next }
         !in_block { print }
-    ' "$RC_FILE" > "${RC_FILE}.wtf-install.tmp"
-    mv "${RC_FILE}.wtf-install.tmp" "$RC_FILE"
+    ' "$RC_FILE" > "$RC_TMP"
+
+    # Preserve the rc file's existing permissions. Without this, reinstalling
+    # under umask 022 would widen a 0600 .zshrc that holds secrets to 0644.
+    if rc_mode=$(stat -c '%a' "$RC_FILE" 2>/dev/null); then
+        chmod "$rc_mode" "$RC_TMP" 2>/dev/null || true
+    elif rc_mode=$(stat -f '%Lp' "$RC_FILE" 2>/dev/null); then
+        chmod "$rc_mode" "$RC_TMP" 2>/dev/null || true
+    fi
+
+    mv "$RC_TMP" "$RC_FILE"
+    trap - EXIT
     info "Replacing existing wtf block in $RC_FILE"
 else
     info "Adding wtf source block to $RC_FILE"
@@ -166,7 +191,8 @@ Then try:
   wtf
   wtf --fix
 
-To pin a version next time:
-  WTF_BRANCH=<tag-or-commit-sha> WTF_SHA256=<hex> \\
-    curl -fsSL https://raw.githubusercontent.com/${REPO}/main/install.sh | bash
+To pin a version next time (env vars must apply to bash, not curl):
+  SHA=<tag-or-commit-sha>
+  curl -fsSL https://raw.githubusercontent.com/${REPO}/\$SHA/install.sh \\
+    | WTF_BRANCH=\"\$SHA\" WTF_SHA256=<hex-of-wtf.sh> bash
 EOF

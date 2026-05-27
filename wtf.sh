@@ -15,8 +15,22 @@ wtf() {
     fi
 
     # Grab the most recent command from history that isn't wtf itself.
+    # bash is forgiving when the requested range exceeds history size; zsh
+    # errors out with "no such event: 0". Fall back to listing everything from
+    # event 1 so a fresh session still has something to work with.
+    local raw_history
+    if ! raw_history=$(fc -ln -10 -1 2>/dev/null); then
+        raw_history=$(fc -ln 1 2>/dev/null) || raw_history=""
+    fi
+    # Skip any history line starting with wtf followed by a shell separator
+    # (space, tab, `;`, `&`, `|`, or end of line). Without this we'd miss
+    # `wtf;`, `wtf\t--fix`, `wtf && something` and risk consuming our own
+    # prior invocation.
     local last_cmd
-    last_cmd=$(fc -ln -10 -1 2>/dev/null | sed 's/^[[:space:]]*//' | awk '!/^wtf( |$)/ && NF' | tail -n1)
+    last_cmd=$(printf '%s\n' "$raw_history" \
+        | sed 's/^[[:space:]]*//' \
+        | awk '!/^wtf([[:space:];&|]|$)/ && NF' \
+        | tail -n1)
 
     if [[ -z "$last_cmd" ]]; then
         printf 'wtf: nothing in history to explain.\n' >&2
@@ -108,7 +122,16 @@ Rules for the fix block:
         local ans
         read -r ans
         if [[ "$ans" =~ ^[Yy] ]]; then
-            eval "$fix_block"
+            # Wrap the fix eval so a failing fix can't trip the caller's
+            # `set -e` and kick them out of their shell. We did what we said
+            # we'd do (ran the fix the user approved); whether the fix itself
+            # succeeded is informational.
+            if eval "$fix_block"; then
+                :
+            else
+                local fix_exit=$?
+                printf 'wtf: fix exited with status %d.\n' "$fix_exit" >&2
+            fi
         else
             printf 'Skipped.\n'
         fi
