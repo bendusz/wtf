@@ -21,7 +21,8 @@ info() { printf '%s\n' "$*"; }
 # inside single-quoted shell code without any chance of breaking out.
 sq() {
     local s=$1
-    printf "'%s'" "${s//\'/\'\\\'\'}"
+    s=${s//\'/\'\\\'\'}
+    printf "'%s'" "$s"
 }
 
 case "$INSTALL_DIR" in
@@ -49,7 +50,7 @@ sha256_of() {
 }
 
 info "Downloading wtf.sh from $SCRIPT_URL ..."
-TMP="${INSTALL_DIR}/.wtf.sh.download.$$"
+TMP=$(mktemp "${INSTALL_DIR}/.wtf.sh.XXXXXX") || { err "mktemp failed"; exit 1; }
 trap 'rm -f "$TMP"' EXIT
 if ! curl -fsSL "$SCRIPT_URL" -o "$TMP"; then
     err "Failed to download wtf.sh from $SCRIPT_URL"
@@ -106,8 +107,10 @@ detect_rc() {
 RC_FILE="$(detect_rc)"
 QUOTED=$(sq "${INSTALL_DIR}/wtf.sh")
 # Use POSIX `.` (not `source`) and guard so this is a no-op in non-bash/zsh
-# shells that happen to source the same rc file (or ~/.profile fallbacks).
-SOURCE_LINE="if [ -n \"\$BASH_VERSION\" ] || [ -n \"\$ZSH_VERSION\" ]; then [ -f ${QUOTED} ] && . ${QUOTED}; fi"
+# shells that happen to source the same rc file. Use `${VAR-}` default-empty
+# expansions so users with `set -u` in their rc don't get an unbound-var error
+# from the guard itself.
+SOURCE_LINE="if [ -n \"\${BASH_VERSION-}\" ] || [ -n \"\${ZSH_VERSION-}\" ]; then [ -f ${QUOTED} ] && . ${QUOTED}; fi"
 
 if [[ -z "$RC_FILE" ]]; then
     cat >&2 <<EOF
@@ -126,15 +129,24 @@ MARKER_BEGIN="# >>> wtf install (https://github.com/${REPO}) >>>"
 MARKER_END="# <<< wtf install <<<"
 
 if grep -Fxq "$MARKER_BEGIN" "$RC_FILE" 2>/dev/null; then
-    info "Already wired into $RC_FILE — skipping. Remove the marker block to re-wire."
+    # Strip the old block so we can rewrite it. Without this, a reinstall
+    # with a changed WTF_INSTALL_DIR would leave the rc still pointing at the
+    # previous path.
+    awk -v begin="$MARKER_BEGIN" -v end="$MARKER_END" '
+        $0 == begin { in_block=1; next }
+        in_block && $0 == end { in_block=0; next }
+        !in_block { print }
+    ' "$RC_FILE" > "${RC_FILE}.wtf-install.tmp"
+    mv "${RC_FILE}.wtf-install.tmp" "$RC_FILE"
+    info "Replacing existing wtf block in $RC_FILE"
 else
-    {
-        printf '\n%s\n' "$MARKER_BEGIN"
-        printf '%s\n' "$SOURCE_LINE"
-        printf '%s\n' "$MARKER_END"
-    } >> "$RC_FILE"
-    info "Added wtf source block to $RC_FILE"
+    info "Adding wtf source block to $RC_FILE"
 fi
+{
+    printf '\n%s\n' "$MARKER_BEGIN"
+    printf '%s\n' "$SOURCE_LINE"
+    printf '%s\n' "$MARKER_END"
+} >> "$RC_FILE"
 
 if ! command -v claude >/dev/null 2>&1; then
     printf '\n⚠  Warning: "claude" CLI not found in PATH.\n'

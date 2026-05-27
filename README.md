@@ -27,19 +27,21 @@ source ~/.zshrc   # or ~/.bash_profile / ~/.bashrc
 
 ### Pinning a version
 
-Install from a specific tag or commit with optional SHA-256 verification:
+For a real chain of custody, pin **both** `install.sh` and `wtf.sh` to the
+same commit SHA and verify the `wtf.sh` digest. Env vars must be applied to
+`bash` (after the pipe), not to `curl`:
 
 ```bash
-WTF_BRANCH=v1.0.0 \
-WTF_SHA256=<hex-digest> \
-  curl -fsSL https://raw.githubusercontent.com/bendusz/wtf/main/install.sh | bash
+SHA=<commit-sha>
+curl -fsSL "https://raw.githubusercontent.com/bendusz/wtf/${SHA}/install.sh" \
+  | WTF_BRANCH="$SHA" WTF_SHA256=<hex-digest-of-wtf.sh> bash
 ```
 
-| Env var          | Purpose                                              |
-| ---------------- | ---------------------------------------------------- |
-| `WTF_BRANCH`     | Ref to fetch (branch / tag / commit sha). Default: `main` |
-| `WTF_INSTALL_DIR`| Where to drop `wtf.sh`. Default: `$HOME/.wtf`       |
-| `WTF_SHA256`     | Expected SHA-256 of `wtf.sh`. Aborts on mismatch.    |
+| Env var          | Purpose                                                    |
+| ---------------- | ---------------------------------------------------------- |
+| `WTF_BRANCH`     | Ref to fetch (branch / tag / commit sha). Default: `main`. |
+| `WTF_INSTALL_DIR`| Where to drop `wtf.sh`. Default: `$HOME/.wtf`.             |
+| `WTF_SHA256`     | Expected SHA-256 of `wtf.sh`. Aborts on mismatch.          |
 
 ## Usage
 
