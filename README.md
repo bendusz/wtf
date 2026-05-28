@@ -46,19 +46,40 @@ curl -fsSL "https://raw.githubusercontent.com/bendusz/wtf/${SHA}/install.sh" \
 ## Usage
 
 ```bash
-wtf            # explain the last command
-wtf --fix      # also propose a fix and prompt to run it
+wtf                  # explain the last command
+wtf --fix            # also propose a fix and prompt to run it
+wtf --force-rerun    # re-run even if the command isn't on the safe allowlist
+wtf --no-rerun       # never re-run; analyze the command text alone
 ```
+
+Short flags: `-f` (`--fix`), `-y` (`--force-rerun`), `-n` (`--no-rerun`).
 
 `--fix` asks Claude to emit a single fix command in a fenced block. `wtf`
 parses it out and prompts `[y/N]` before running anything. Multi-line fix
 blocks are rejected instead of silently truncated.
 
+By default `wtf` checks the last command against a read-only allowlist
+(`ls`, `cat`, `grep`, `git status`, `kubectl get`, `docker ps`, `curl` without
+`-X POST`/`-d`, etc.). If the command isn't on the allowlist, you get a
+three-way prompt: re-run anyway, skip the re-run and analyze the command
+alone, or abort. Pipelines, multi-statement lines, redirections, command
+substitutions, and `sudo` all force the prompt.
+
+The classifier is a heuristic on literal history text. A wrapper script
+(`./deploy.sh`) won't be classified and will prompt. An alias whose **name**
+shadows an allowlisted command (e.g. `alias ls='rm -rf'`) will still auto-rerun,
+because `wtf` sees the alias name in history, not its expansion. Same caveat
+applies to shell functions. `awk` programs that shell out via `system()` or
+pipe expressions are detected by string match — obfuscated forms can slip
+through. Use `--no-rerun` if in doubt.
+
 ## How it works
 
 1. Grabs the previous command from history with `fc -ln`.
-2. Re-runs it to capture stdout, stderr, and the exit code.
-3. Sends everything to `claude -p`, with the captured output wrapped in
+2. Classifies it against a read-only allowlist. If safe, re-runs it to
+   capture stdout, stderr, and the exit code. Otherwise prompts (or honors
+   `--force-rerun`/`--no-rerun`).
+3. Sends everything to `claude -p`, with any captured output wrapped in
    delimiters and an instruction to treat it as untrusted data.
 4. With `--fix`: parses the fenced `fix` block and prompts before `eval`-ing it.
 
@@ -71,9 +92,12 @@ blocks are rejected instead of silently truncated.
 
 ## Caveats
 
-- **`wtf` re-runs the last command** to capture its real output. Don't run
-  it after destructive commands (`rm`, `git reset --hard`, network mutations,
-  etc.) — you'll execute them twice.
+- **`wtf` may re-run the last command** to capture its real output. By
+  default it only auto-reruns commands on a read-only allowlist; anything
+  else (e.g. `rm`, `git reset --hard`, `curl -X POST`, opaque scripts) hits
+  a three-way prompt first. `--force-rerun` skips the gate; `--no-rerun`
+  disables re-execution entirely. The allowlist is heuristic — aliases and
+  wrapper scripts (`./deploy.sh`) can't be classified and always prompt.
 - **`--fix` runs `eval` on whatever Claude returns.** It prompts first, but
   always read the command before saying yes.
 - Captured stderr is passed to Claude as **untrusted data**. The prompt

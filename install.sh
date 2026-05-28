@@ -129,18 +129,23 @@ MARKER_BEGIN="# >>> wtf install (https://github.com/${REPO}) >>>"
 MARKER_END="# <<< wtf install <<<"
 
 if grep -Fxq "$MARKER_BEGIN" "$RC_FILE" 2>/dev/null; then
-    # Require BOTH markers in correct order. If the end marker is missing,
-    # the awk filter below would strip from the begin marker to EOF and could
-    # delete unrelated rc content. Refuse instead.
-    if ! grep -Fxq "$MARKER_END" "$RC_FILE" 2>/dev/null; then
-        err "Found wtf begin marker in $RC_FILE but no matching end marker."
-        err "Refusing to modify the file. Remove the orphan wtf line(s) by"
-        err "hand and re-run the installer."
+    # Require EXACTLY ONE begin and ONE end. If either marker appears more
+    # than once (e.g. an orphaned begin line slipped in below a valid block),
+    # the awk filter below would mis-strip content — for instance, a second
+    # begin after the matched end would set in_block=1 again and delete
+    # everything up to EOF. Refuse rather than risk that.
+    begin_count=$(grep -Fxc "$MARKER_BEGIN" "$RC_FILE" 2>/dev/null || echo 0)
+    end_count=$(grep -Fxc "$MARKER_END" "$RC_FILE" 2>/dev/null || echo 0)
+    if (( begin_count != 1 || end_count != 1 )); then
+        err "wtf markers in $RC_FILE are not a single matched pair"
+        err "(found $begin_count begin, $end_count end)."
+        err "Refusing to modify the file. Clean up the duplicate or orphan"
+        err "wtf marker line(s) by hand and re-run the installer."
         exit 1
     fi
-    begin_line=$(grep -nFx "$MARKER_BEGIN" "$RC_FILE" | head -n1 | cut -d: -f1)
-    end_line=$(grep -nFx "$MARKER_END" "$RC_FILE" | tail -n1 | cut -d: -f1)
-    if [[ -z "$begin_line" || -z "$end_line" ]] || (( begin_line >= end_line )); then
+    begin_line=$(grep -nFx "$MARKER_BEGIN" "$RC_FILE" | cut -d: -f1)
+    end_line=$(grep -nFx "$MARKER_END" "$RC_FILE" | cut -d: -f1)
+    if (( begin_line >= end_line )); then
         err "wtf markers in $RC_FILE are out of order — please fix manually."
         exit 1
     fi
@@ -161,7 +166,16 @@ if grep -Fxq "$MARKER_BEGIN" "$RC_FILE" 2>/dev/null; then
         chmod "$rc_mode" "$RC_TMP" 2>/dev/null || true
     fi
 
-    mv "$RC_TMP" "$RC_FILE"
+    # If the rc file is a symlink (common with dotfile managers), `mv` would
+    # replace the symlink with a regular file and orphan the dotfile repo's
+    # canonical copy. Detect that case and write through the link instead;
+    # for regular files keep the atomic rename.
+    if [[ -L "$RC_FILE" ]]; then
+        cat "$RC_TMP" > "$RC_FILE"
+        rm -f "$RC_TMP"
+    else
+        mv "$RC_TMP" "$RC_FILE"
+    fi
     trap - EXIT
     info "Replacing existing wtf block in $RC_FILE"
 else
